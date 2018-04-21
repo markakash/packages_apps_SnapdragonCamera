@@ -38,6 +38,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 
 import com.android.camera.CaptureModule;
+import com.android.camera.SettingsManager;
 import com.android.camera.Storage;
 import com.android.camera.imageprocessor.filter.BeautificationFilter;
 
@@ -499,8 +500,9 @@ public class OneUICameraControls extends RotatableLayout {
         mOrientation = orientation;
         View[] views = {
                 mSceneModeSwitcher, mFilterModeSwitcher, mFrontBackSwitcher,
-                mTsMakeupSwitcher, mFlashButton, mPreview, mMute, mShutter, mVideoShutter,
-                mMakeupSeekBarLowText, mMakeupSeekBarHighText, mPauseButton, mExitBestPhotpMode
+                mTsMakeupSwitcher, mFlashButton, mDeepportraitSwitcher, mPreview, mMute,
+                mShutter, mVideoShutter, mMakeupSeekBarLowText, mMakeupSeekBarHighText,
+                mPauseButton, mExitBestPhotpMode
         };
 
         for (View v : views) {
