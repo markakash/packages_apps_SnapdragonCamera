@@ -348,7 +348,7 @@ public class CaptureModule implements CameraModule, PhotoController,
 
     boolean mUnsupportedResolution = false;
 
-    private static final int SDCARD_SIZE_LIMIT = 4000 * 1024 * 1024;
+    private static final long SDCARD_SIZE_LIMIT = 4000 * 1024 * 1024L;
     private static final String sTempCropFilename = "crop-temp";
     private static final int REQUEST_CROP = 1000;
     private int mIntentMode = INTENT_MODE_NORMAL;
@@ -854,7 +854,8 @@ public class CaptureModule implements CameraModule, PhotoController,
                     }
                 }
 
-                if (CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED == afState &&
+                if ((CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED == afState ||
+                        CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED == afState) &&
                         (aeState == null || aeState == CaptureResult.CONTROL_AE_STATE_LOCKED)) {
                     checkAfAeStatesAndCapture(id);
                 }
@@ -2326,7 +2327,11 @@ public class CaptureModule implements CameraModule, PhotoController,
                     if (!mIsSupportedQcfa) {
                         mUI.enableShutter(true);
                     }
-                    mUI.enableVideo(true);
+                    if (mDeepPortraitMode) {
+                        mUI.enableVideo(false);
+                    } else {
+                        mUI.enableVideo(true);
+                    }
                 }
             });
         }
@@ -2913,13 +2918,16 @@ public class CaptureModule implements CameraModule, PhotoController,
             msg.arg1 = cameraId;
             mCameraHandler.sendMessage(msg);
         }
-        if (!mDeepPortraitMode) {
+        if (mDeepPortraitMode) {
+            mUI.startDeepPortraitMode(mPreviewSize);
+            if (mUI.getGLCameraPreview() != null) {
+                mUI.getGLCameraPreview().onResume();
+            }
+            mUI.enableVideo(false);
+        } else {
             mUI.showSurfaceView();
             mUI.stopDeepPortraitMode();
-        } else {
-            mUI.startDeepPortraitMode(mPreviewSize);
-            if (mUI.getGLCameraPreview() != null)
-                mUI.getGLCameraPreview().onResume();
+            mUI.enableVideo(true);
         }
 
         if (!mFirstTimeInitialized) {
@@ -2935,7 +2943,6 @@ public class CaptureModule implements CameraModule, PhotoController,
             }
         });
         mUI.enableShutter(true);
-        mUI.enableVideo(true);
         setProModeVisible();
 
         String scene = mSettingsManager.getValue(SettingsManager.KEY_SCENE_MODE);
@@ -3506,6 +3513,7 @@ public class CaptureModule implements CameraModule, PhotoController,
             Log.d(TAG, "Longshot button up");
             mLongshotActive = false;
             mPostProcessor.stopLongShot();
+            mUI.enableVideo(!mLongshotActive);
         }
     }
 
@@ -3652,7 +3660,6 @@ public class CaptureModule implements CameraModule, PhotoController,
             mCaptureSession[cameraId] = cameraCaptureSession;
             try {
                 setUpVideoCaptureRequestBuilder(mVideoRequestBuilder, cameraId);
-
                 mCurrentSession.setRepeatingRequest(mVideoRequestBuilder.build(),
                         mCaptureCallback, mCameraHandler);
             } catch (CameraAccessException e) {
@@ -3758,6 +3765,7 @@ public class CaptureModule implements CameraModule, PhotoController,
                         CameraConstrainedHighSpeedCaptureSession session =
                                     (CameraConstrainedHighSpeedCaptureSession) mCurrentSession;
                         try {
+                            setUpVideoCaptureRequestBuilder(mVideoRequestBuilder, cameraId);
                             List list = CameraUtil
                                     .createHighSpeedRequestList(mVideoRequestBuilder.build());
                             session.setRepeatingBurst(list, mCaptureCallback, mCameraHandler);
@@ -3786,7 +3794,7 @@ public class CaptureModule implements CameraModule, PhotoController,
                         mRecordingTotalTime = 0L;
                         mRecordingStartTime = SystemClock.uptimeMillis();
                         mUI.enableShutter(false);
-                        mUI.showRecordingUI(true, true);
+                        mUI.showRecordingUI(true, false);
                         updateRecordingTime();
                         keepScreenOn();
                     }
@@ -3974,15 +3982,23 @@ public class CaptureModule implements CameraModule, PhotoController,
     }
 
     private void updateVideoFlash() {
-        if (!mIsRecordingVideo || mHighSpeedCapture) return;
+        if (!mIsRecordingVideo) return;
         applyVideoFlash(mVideoRequestBuilder);
         applyVideoFlash(mVideoPausePreviewRequestBuilder);
+        CaptureRequest captureRequest = null;
         try {
             if (mMediaRecorderPausing) {
-                mCurrentSession.setRepeatingRequest(mVideoPausePreviewRequestBuilder.build(),
-                        mCaptureCallback, mCameraHandler);
+                captureRequest = mVideoPausePreviewRequestBuilder.build();
             } else {
-                mCurrentSession.setRepeatingRequest(mVideoRequestBuilder.build(), mCaptureCallback,
+                captureRequest = mVideoRequestBuilder.build();
+            }
+            if (mCurrentSession instanceof CameraConstrainedHighSpeedCaptureSession) {
+                CameraConstrainedHighSpeedCaptureSession session =
+                        (CameraConstrainedHighSpeedCaptureSession) mCurrentSession;
+                List requestList = session.createHighSpeedRequestList(captureRequest);
+                session.setRepeatingBurst(requestList, mCaptureCallback, mCameraHandler);
+            } else {
+                mCurrentSession.setRepeatingRequest(captureRequest, mCaptureCallback,
                         mCameraHandler);
             }
         } catch (CameraAccessException e) {
@@ -4608,11 +4624,13 @@ public class CaptureModule implements CameraModule, PhotoController,
 
             if (isLongshotNeedCancel()) {
                 mLongshotActive = false;
+                mUI.enableVideo(!mLongshotActive);
                 return;
             }
 
             Log.d(TAG, "Start Longshot");
             mLongshotActive = true;
+            mUI.enableVideo(!mLongshotActive);
             takePicture();
         } else {
             RotateTextToast.makeText(mActivity, "Long shot not support", Toast.LENGTH_SHORT).show();
@@ -5119,9 +5137,10 @@ public class CaptureModule implements CameraModule, PhotoController,
             request.set(CaptureRequest.CONTROL_AE_MODE,
                     CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH_REDEYE);
         } else {
+            boolean isCaptureBrust = isCaptureBrustMode();
             switch (value) {
                 case "on":
-                    if (mLongshotActive) {
+                    if (isCaptureBrust) {
                         request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
                         request.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH);
                     } else {
@@ -5130,7 +5149,7 @@ public class CaptureModule implements CameraModule, PhotoController,
                     }
                     break;
                 case "auto":
-                    if (mLongshotActive) {
+                    if (isCaptureBrust) {
                         // When long shot is active, turn off the flash in auto mode
                         request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
                         request.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF);
@@ -5162,14 +5181,27 @@ public class CaptureModule implements CameraModule, PhotoController,
             return;
         }
         String value = mSettingsManager.getValue(SettingsManager.KEY_FLASH_MODE);
+
+        boolean isCaptureBrust = isCaptureBrustMode();
         switch (value) {
             case "on":
-                request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH);
-                request.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE);
+                if (isCaptureBrust) {
+                    request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+                    request.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH);
+                } else {
+                    request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_ALWAYS_FLASH);
+                    request.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE);
+                }
                 break;
             case "auto":
-                request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
-                request.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE);
+                if (isCaptureBrust) {
+                    // When long shot is active, turn off the flash in auto mode
+                    request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+                    request.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF);
+                } else {
+                    request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
+                    request.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_SINGLE);
+                }
                 break;
             case "off":
                 request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
@@ -5520,6 +5552,24 @@ public class CaptureModule implements CameraModule, PhotoController,
         } catch(Exception e) {
         }
         return false;
+    }
+
+    private boolean isCaptureBrustMode() {
+        boolean isCaptureBrustMode = false;
+        String value = mSettingsManager.getValue(SettingsManager.KEY_SCENE_MODE);
+        if (value != null) {
+            int mode = Integer.parseInt(value);
+            if(mode == SettingsManager.SCENE_MODE_NIGHT_INT ||
+                    mode == SettingsManager.SCENE_MODE_SHARPSHOOTER_INT ||
+                    mode == SettingsManager.SCENE_MODE_BLURBUSTER_INT ||
+                    mode == SettingsManager.SCENE_MODE_BESTPICTURE_INT ||
+                    mode == SettingsManager.SCENE_MODE_OPTIZOOM_INT ||
+                    mode == SettingsManager.SCENE_MODE_UBIFOCUS_INT) {
+                isCaptureBrustMode = true;
+            }
+        }
+
+        return isCaptureBrustMode || mLongshotActive;
     }
 
     public boolean isDeepZoom() {
@@ -5974,8 +6024,9 @@ public class CaptureModule implements CameraModule, PhotoController,
         updatePreviewSurfaceReadyState(true);
         mUI.initThumbnail();
         if (getFrameFilters().size() == 0) {
-            Toast.makeText(mActivity, "DeepPortrait is not supported",
-                    Toast.LENGTH_LONG).show();
+            if (mDeepPortraitMode) {
+                Toast.makeText(mActivity, "DeepPortrait is not supported", Toast.LENGTH_LONG).show();
+            }
             return;
         }
         mRenderer = getGLCameraPreview().getRendererInstance();
