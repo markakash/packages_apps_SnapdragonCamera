@@ -168,6 +168,8 @@ public class SettingsActivity extends PreferenceActivity {
                 R.string.pref_camera_manual_exp_value_exptime_priority);
         String userSetting = this.getString(
                 R.string.pref_camera_manual_exp_value_user_setting);
+        String gainsPriority = this.getString(
+                R.string.pref_camera_manual_exp_value_gains_priority);
         String manualExposureMode = mSettingsManager.getValue(SettingsManager.KEY_MANUAL_EXPOSURE);
         String currentISO = pref.getString(SettingsManager.KEY_MANUAL_ISO_VALUE, "-1");
         long[] exposureRange = mSettingsManager.getExposureRangeValues(cameraId);
@@ -282,9 +284,48 @@ public class SettingsActivity extends PreferenceActivity {
                 }
             });
             alert.show();
-        } else {
-
+        } else if (manualExposureMode.equals(gainsPriority)){
+            handleManualGainsPriority(linear, ISOtext, ExpTimeInput, pref);
         }
+    }
+
+    private void handleManualGainsPriority(final LinearLayout linear, final TextView gainsText,
+        final EditText gainsInput, final SharedPreferences pref) {
+        SharedPreferences.Editor editor = pref.edit();
+        final AlertDialog.Builder alert = new AlertDialog.Builder(SettingsActivity.this);
+        int cameraId = mSettingsManager.getCurrentCameraId();
+        int[] isoRange = mSettingsManager.getIsoRangeValues(cameraId);
+        float[] gainsRange = new float[2];
+        gainsRange[0] = 1.0f;
+        gainsRange[1] = (float) isoRange[1]/isoRange[0];
+        float currentGains = pref.getFloat(SettingsManager.KEY_MANUAL_GAINS_VALUE, -1.0f);
+        if (currentGains != -1.0f) {
+            gainsText.setText(" Current Gains is " + currentGains);
+        } else {
+            gainsText.setText(" Please enter gains value ");
+        }
+        alert.setMessage("Enter gains in the range of " + gainsRange[0] + " to " + gainsRange[1]);
+        linear.addView(gainsInput);
+        linear.addView(gainsText);
+        alert.setView(linear);
+        alert.setPositiveButton("Ok", new DialogInterface.OnClickListener() {
+            public void onClick(DialogInterface dialog, int id) {
+                float newGain = -1;
+                String gain = gainsInput.getText().toString();
+                Log.v(TAG, "string gain length " + gain.length() + ", gain :" + gain);
+                if (gain.length() > 0) {
+                    newGain = Float.parseFloat(gain);
+                }
+                if (newGain <= gainsRange[1] && newGain >= gainsRange[0]) {
+                    editor.putFloat(SettingsManager.KEY_MANUAL_GAINS_VALUE, newGain);
+                    editor.apply();
+                } else {
+                    RotateTextToast.makeText(SettingsActivity.this, "Invalid GAINS",
+                            Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+        alert.show();
     }
 
     @Override
@@ -310,7 +351,6 @@ public class SettingsActivity extends PreferenceActivity {
         }
         mSettingsManager.registerListener(mListener);
         addPreferencesFromResource(R.xml.setting_menu_preferences);
-
         mSharedPreferences = getPreferenceManager().getSharedPreferences();
         mDeveloperMenuEnabled = mSharedPreferences.getBoolean(SettingsManager.KEY_DEVELOPER_MENU, false);
 
@@ -410,6 +450,7 @@ public class SettingsActivity extends PreferenceActivity {
         updatePreference(SettingsManager.KEY_SWITCH_CAMERA);
         updatePictureSizePreferenceButton();
         updateVideoHDRPreference();
+        updateStatsVisualizerPreference();
 
         Map<String, SettingsManager.Values> map = mSettingsManager.getValuesMap();
         Set<Map.Entry<String, SettingsManager.Values>> set = map.entrySet();
@@ -452,6 +493,14 @@ public class SettingsActivity extends PreferenceActivity {
         } catch (PackageManager.NameNotFoundException e) {
             e.printStackTrace();
         }
+    }
+
+    private void updateStatsVisualizerPreference() {
+        ListPreference pref = (ListPreference)findPreference(SettingsManager.KEY_STATS_VISUALIZER_VALUE);
+        if (pref == null) {
+            return;
+        }
+        pref.setEnabled(true);
     }
 
     private void updateVideoHDRPreference() {
