@@ -67,6 +67,7 @@ import android.widget.RelativeLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
+import com.android.camera.imageprocessor.filter.BeautificationFilter;
 import com.android.camera.imageprocessor.filter.DeepPortraitFilter;
 import com.android.camera.ui.AutoFitSurfaceView;
 import com.android.camera.ui.Camera2FaceView;
@@ -697,10 +698,13 @@ public class CaptureUI implements FocusOverlayManager.FocusUI,
 
     public void initializeProMode(boolean promode) {
         mCameraControls.setProMode(promode);
-        if (promode)
+        if (promode) {
             mVideoButton.setVisibility(View.INVISIBLE);
-        else if (mModule.getCurrentIntentMode() == CaptureModule.INTENT_MODE_NORMAL)
+            mFlashButton.setVisibility(View.INVISIBLE);
+        }
+        else if (mModule.getCurrentIntentMode() == CaptureModule.INTENT_MODE_NORMAL) {
             mVideoButton.setVisibility(View.VISIBLE);
+        }
     }
 
     // called from onResume but only the first time
@@ -1361,7 +1365,9 @@ public class CaptureUI implements FocusOverlayManager.FocusUI,
              enableMakeupMenu = false;
              enableFilterMenu = false;
         }
-
+        if(!BeautificationFilter.isSupportedStatic()) {
+            enableMakeupMenu = false;
+        }
         mMakeupButton.setEnabled(enableMakeupMenu);
         mFilterModeSwitcher.setEnabled(enableFilterMenu);
         mSceneModeSwitcher.setEnabled(enableSceneMenu);

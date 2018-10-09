@@ -102,6 +102,8 @@ public class SettingsManager implements ListMenu.SettingsListener {
     public static final int SCENE_MODE_PROMODE_INT = SCENE_MODE_CUSTOM_START + 9;
     public static final int SCENE_MODE_DEEPZOOM_INT = SCENE_MODE_CUSTOM_START + 10;
 	public static final int SCENE_MODE_DEEPPORTRAIT_INT = SCENE_MODE_CUSTOM_START + 11;
+    public static final int JPEG_FORMAT = 0;
+    public static final int HEIF_FORMAT = 1;
     public static final String SCENE_MODE_DUAL_STRING = "100";
     public static final String SCENE_MODE_SUNSET_STRING = "10";
     public static final String SCENE_MODE_LANDSCAPE_STRING = "4";
@@ -124,6 +126,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
     public static final String KEY_CAMERA_ID = "pref_camera2_id_key";
     public static final String KEY_SWITCH_CAMERA = "pref_camera2_switch_camera_key";
     public static final String KEY_PICTURE_SIZE = "pref_camera2_picturesize_key";
+    public static final String KEY_PICTURE_FORMAT = "pref_camera2_picture_format_key";
     public static final String KEY_ISO = "pref_camera2_iso_key";
     public static final String KEY_EXPOSURE = "pref_camera2_exposure_key";
     public static final String KEY_TIMER = "pref_camera2_timer_key";
@@ -159,10 +162,20 @@ public class SettingsManager implements ListMenu.SettingsListener {
     public static final String KEY_SHARPNESS_CONTROL_MODE = "pref_camera2_sharpness_control_key";
     public static final String KEY_AF_MODE = "pref_camera2_afmode_key";
     public static final String KEY_EXPOSURE_METERING_MODE = "pref_camera2_exposure_metering_key";
+
+    //manual 3A keys and parameter strings
     public static final String KEY_MANUAL_EXPOSURE = "pref_camera2_manual_exp_key";
     public static final String KEY_MANUAL_ISO_VALUE = "pref_camera2_manual_iso_key";
     public static final String KEY_MANUAL_GAINS_VALUE = "pref_camera2_manual_gains_key";
     public static final String KEY_MANUAL_EXPOSURE_VALUE = "pref_camera2_manual_exposure_key";
+
+    public static final String KEY_MANUAL_WB = "pref_camera2_manual_wb_key";
+    public static final String KEY_MANUAL_WB_TEMPERATURE_VALUE =
+            "pref_camera2_manual_temperature_key";
+    public static final String KEY_MANUAL_WB_R_GAIN = "pref_camera2_manual_wb_r_gain";
+    public static final String KEY_MANUAL_WB_G_GAIN = "pref_camera2_manual_wb_g_gain";
+    public static final String KEY_MANUAL_WB_B_GAIN = "pref_camera2_manual_wb_b_gain";
+
     public static final String KEY_QCFA = "pref_camera2_qcfa_key";
     public static final String KEY_EIS_VALUE = "pref_camera2_eis_key";
     public static final String KEY_FOVC_VALUE = "pref_camera2_fovc_key";
@@ -419,7 +432,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
             try {
                 newValue = dependencyList.getString(keyToProcess);
             } catch (JSONException e) {
-                e.printStackTrace();
+                Log.w(TAG, "initializeValueMap JSONException No value for:" + keyToProcess);
                 continue;
             }
             Values values = new Values(getValue(keyToProcess), newValue);
@@ -488,7 +501,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
             try {
                 newValue = dependencyList.getString(keyToTurnOff);
             } catch (JSONException e) {
-                e.printStackTrace();
+                Log.w(TAG, "checkDependencyAndUpdate JSONException No value for:" + keyToTurnOff);
                 continue;
             }
             if (newValue == null) continue;
@@ -593,6 +606,23 @@ public class SettingsManager implements ListMenu.SettingsListener {
         return sharedPreferences.getFloat(key, 0.5f);
     }
 
+    private boolean setIsoPref(String key, int value) {
+        boolean result = false;
+        final SharedPreferences sharedPref = mContext.getSharedPreferences(
+                ComboPreferences.getLocalSharedPreferencesName(mContext, getCurrentCameraId()),
+                Context.MODE_PRIVATE);
+        int prefValue = Integer.parseInt(sharedPref.getString(key, "100"));
+        if (prefValue != value) {
+            ListPreference pref = mPreferenceGroup.findPreference(key);
+            SharedPreferences.Editor editor = sharedPref.edit();
+            editor.putString(key, String.valueOf(value));
+            editor.apply();
+            updateMapAndNotify(pref);
+            result = true;
+        }
+        return result;
+    }
+
     public boolean isOverriden(String key) {
         Values values = mValuesMap.get(key);
         return values.overriddenValue != null;
@@ -630,6 +660,20 @@ public class SettingsManager implements ListMenu.SettingsListener {
             List<SettingState> list = new ArrayList<>();
             Values values = new Values("" + value * minFocus, null);
             SettingState ss = new SettingState(KEY_FOCUS_DISTANCE, values);
+            list.add(ss);
+            notifyListeners(list);
+        }
+    }
+
+    public void setIsoValue(String key, boolean forceNotify, float value, int maxIso) {
+        boolean isSuccess = false;
+        if (value >= 0) {
+            isSuccess = setIsoPref(key, (int)(value * maxIso));
+        }
+        if (isSuccess || forceNotify) {
+            List<SettingState> list = new ArrayList<>();
+            Values values = new Values("" + value * maxIso, null);
+            SettingState ss = new SettingState(KEY_MANUAL_ISO_VALUE, values);
             list.add(ss);
             notifyListeners(list);
         }
@@ -730,6 +774,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
         if (flashMode != null) {
             if (!isFlashAvailable(mCameraId)) {
                 removePreference(mPreferenceGroup, KEY_FLASH_MODE);
+                removePreference(mPreferenceGroup, KEY_VIDEO_FLASH_MODE);
                 mFilteredKeys.add(flashMode.getKey());
             }
         }
@@ -939,6 +984,38 @@ public class SettingsManager implements ListMenu.SettingsListener {
         return pref.getEntryValues();
     }
 
+    public int[] getWBColorTemperatureRangeValues(int cameraId) {
+        int[] wbRange = null;
+        try {
+            wbRange =  mCharacteristics.get(cameraId).get(CaptureModule.WB_COLOR_TEMPERATURE_RANGE);
+            if (wbRange == null) {
+                Log.w(TAG, "Supported exposure range get null.");
+                return null;
+            }
+        } catch(NullPointerException e) {
+            Log.w(TAG, "Supported exposure range modes is null.");
+        } catch(IllegalArgumentException e) {
+            Log.w(TAG, "Supported exposure range modes occur IllegalArgumentException.");
+        }
+        return wbRange;
+    }
+
+    public float[] getWBGainsRangeValues(int cameraId) {
+        float[] rgbRange = null;
+        try {
+            rgbRange =  mCharacteristics.get(cameraId).get(CaptureModule.WB_RGB_GAINS_RANGE);
+            if (rgbRange == null) {
+                Log.w(TAG, "Supported gains range get null.");
+                return null;
+            }
+        } catch(NullPointerException e) {
+            Log.w(TAG, "Supported gains range modes is null.");
+        } catch(IllegalArgumentException e) {
+            Log.w(TAG, "Supported gains range modes occur IllegalArgumentException.");
+        }
+        return rgbRange;
+    }
+
     public long[] getExposureRangeValues(int cameraId) {
         long[] exposureRange = null;
         try {
@@ -970,7 +1047,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
         } catch(NullPointerException e) {
             Log.w(TAG, "Supported iso range is null.");
         } catch(IllegalArgumentException e) {
-            Log.w(TAG, "Supported iso range is null.");
+            Log.w(TAG, "IllegalArgumentException Supported iso range is null.");
         }
         return result;
     }
@@ -1693,9 +1770,17 @@ public class SettingsManager implements ListMenu.SettingsListener {
         return num_val;
     }
 
+
+
     public boolean isCamera2HDRSupport(){
         String value = getValue(KEY_HDR);
         return value != null && value.equals("enable");
+    }
+
+    public int getSavePictureFormat() {
+        String value = getValue(SettingsManager.KEY_PICTURE_FORMAT);
+        if (value == null) return 0;
+        return Integer.valueOf(value);
     }
 
     public boolean isZSLInHALEnabled(){
@@ -1805,7 +1890,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
         try {
             return mDependency.getJSONObject(key);
         } catch (JSONException e) {
-            e.printStackTrace();
+            Log.w(TAG, "getDependencyMapForKey JSONException No value for:" + key);
             return null;
         }
     }
@@ -1819,7 +1904,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
         try {
             return dependencyMap.getJSONObject(value);
         } catch (JSONException e) {
-            e.printStackTrace();
+            Log.w(TAG, "getDependencyList JSONException No value for:" + key);
             return null;
         }
     }
