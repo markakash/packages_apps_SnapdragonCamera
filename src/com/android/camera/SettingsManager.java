@@ -643,6 +643,17 @@ public class SettingsManager implements ListMenu.SettingsListener {
         }
     }
 
+    public boolean setValue(String key, Set<String> set) {
+        ListPreference pref = mPreferenceGroup.findPreference(key);
+        if (pref != null) {
+            pref.setFromMultiValues(set);
+            updateMapAndNotify(pref);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
     public void setValueIndex(String key, int index) {
         ListPreference pref = mPreferenceGroup.findPreference(key);
         if (pref != null) {
@@ -810,13 +821,6 @@ public class SettingsManager implements ListMenu.SettingsListener {
             if (filterUnsupportedOptions(antiBandingLevel,
                     getSupportedAntiBandingLevelAvailableModes(cameraId))) {
                 mFilteredKeys.add(antiBandingLevel.getKey());
-            }
-        }
-
-        if (stats_visualizer != null) {
-            if (filterUnsupportedOptions(stats_visualizer,
-                    getSupportedStatsVisualizerAvailableModes(cameraId))) {
-                mFilteredKeys.add(stats_visualizer.getKey());
             }
         }
 
@@ -1423,9 +1427,10 @@ public class SettingsManager implements ListMenu.SettingsListener {
         return map.getHighSpeedVideoFpsRangesFor(videoSize);
     }
 
-    public int getHighSpeedVideoEncoderBitRate(CamcorderProfile profile, int targetRate) {
-        int bitRate;
-        String key = profile.videoFrameWidth+"x"+profile.videoFrameHeight+":"+targetRate;
+    public int getHighSpeedVideoEncoderBitRate(CamcorderProfile profile, int targetRate,
+                                               int captureRate) {
+        long bitRate;
+        String key = profile.videoFrameWidth+"x"+profile.videoFrameHeight+":"+captureRate;
         String resolutionFpsEncoder = key + ":" + profile.videoCodec;
         if (CameraSettings.VIDEO_ENCODER_BITRATE.containsKey(resolutionFpsEncoder)) {
             bitRate = CameraSettings.VIDEO_ENCODER_BITRATE.get(resolutionFpsEncoder);
@@ -1434,8 +1439,12 @@ public class SettingsManager implements ListMenu.SettingsListener {
         } else {
             Log.i(TAG, "No pre-defined bitrate for "+key);
             bitRate = (profile.videoBitRate * targetRate) / profile.videoFrameRate;
+            return (int)bitRate;
         }
-        return bitRate;
+        if (targetRate != captureRate) { // HFR use case. Do scaling based on HSR bitrate
+            bitRate = (bitRate * targetRate) / captureRate;
+        }
+        return (int)bitRate;
     }
 
     private List<String> getSupportedRedeyeReduction(int cameraId) {
@@ -1726,21 +1735,6 @@ public class SettingsManager implements ListMenu.SettingsListener {
         return  modes;
     }
 
-    public List<String> getSupportedStatsVisualizerAvailableModes(int cameraId) {
-        int[] statsVisualizerAvailableModes = {0, 1, 2, 3};
-        /*
-        0 - disable stats
-        1 - enable BG stats
-        2 - enable BE stats
-        3 - enable Hist stats
-        */
-        List<String> modes = new ArrayList<>();
-        for (int i : statsVisualizerAvailableModes) {
-            modes.add(""+i);
-        }
-        return  modes;
-    }
-
     public List<String> getSupportedHdrAvailableModes(int cameraId) {
         String[] data = {"enable","disable"};
         List<String> modes = new ArrayList<>();
@@ -1757,17 +1751,6 @@ public class SettingsManager implements ListMenu.SettingsListener {
             profile.addAll(VIDEO_ENCODER_PROFILE_TABLE.get(videoEncoder));
         }
         return profile;
-    }
-
-    public int isStatsVisualizerSupport(){
-        String value = getValue(KEY_STATS_VISUALIZER_VALUE);
-        int num_val;
-        if (value == null) {
-            num_val = -1;
-            return num_val;
-        }
-        num_val = Integer.parseInt(value);
-        return num_val;
     }
 
 

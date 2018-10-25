@@ -38,6 +38,7 @@ import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
 import android.os.Bundle;
 import android.preference.ListPreference;
+import android.preference.MultiSelectListPreference;
 import android.preference.Preference;
 import android.preference.PreferenceCategory;
 import android.preference.PreferenceGroup;
@@ -59,6 +60,7 @@ import org.codeaurora.snapcam.R;
 import com.android.camera.util.CameraUtil;
 import com.android.camera.ui.RotateTextToast;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -88,6 +90,9 @@ public class SettingsActivity extends PreferenceActivity {
             } else if (p instanceof ListPreference){
                 value = ((ListPreference) p).getValue();
                 mSettingsManager.setValue(key, value);
+            } else if (p instanceof MultiSelectListPreference) {
+                Set<String> valueSet = ((MultiSelectListPreference)p).getValues();
+                mSettingsManager.setValue(key,valueSet);
             }
             if (key.equals(SettingsManager.KEY_VIDEO_QUALITY)) {
                 updatePreference(SettingsManager.KEY_VIDEO_HIGH_FRAME_RATE);
@@ -161,8 +166,7 @@ public class SettingsActivity extends PreferenceActivity {
         final TextView ExpTimeText = new TextView(SettingsActivity.this);
         final EditText ExpTimeInput = new EditText(SettingsActivity.this);
         ISOinput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        int floatType = InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_CLASS_NUMBER;
-        ExpTimeInput.setInputType(floatType);
+        ExpTimeInput.setInputType(InputType.TYPE_CLASS_NUMBER);
         alert.setTitle("Manual Exposure Settings");
         alert.setNegativeButton("Cancel",new DialogInterface.OnClickListener() {
             public void onClick(DialogInterface dialog,int id) {
@@ -648,9 +652,9 @@ public class SettingsActivity extends PreferenceActivity {
         updatePreference(SettingsManager.KEY_VIDEO_ENCODER);
         updatePreference(SettingsManager.KEY_ZOOM);
         updatePreference(SettingsManager.KEY_SWITCH_CAMERA);
+        updateMultiPreference(SettingsManager.KEY_STATS_VISUALIZER_VALUE);
         updatePictureSizePreferenceButton();
         updateVideoHDRPreference();
-        updateStatsVisualizerPreference();
 
         Map<String, SettingsManager.Values> map = mSettingsManager.getValuesMap();
         Set<Map.Entry<String, SettingsManager.Values>> set = map.entrySet();
@@ -704,14 +708,6 @@ public class SettingsActivity extends PreferenceActivity {
         }
     }
 
-    private void updateStatsVisualizerPreference() {
-        ListPreference pref = (ListPreference)findPreference(SettingsManager.KEY_STATS_VISUALIZER_VALUE);
-        if (pref == null) {
-            return;
-        }
-        pref.setEnabled(true);
-    }
-
     private void updateVideoHDRPreference() {
         ListPreference pref = (ListPreference)findPreference(SettingsManager.KEY_VIDEO_HDR_VALUE);
         if (pref == null) {
@@ -756,6 +752,25 @@ public class SettingsActivity extends PreferenceActivity {
                     idx = 0;
                 }
                 pref.setValueIndex(idx);
+            }
+        }
+    }
+
+    private void updateMultiPreference(String key) {
+        MultiSelectListPreference pref = (MultiSelectListPreference) findPreference(key);
+        if (pref != null) {
+            if (mSettingsManager.getEntries(key) != null) {
+                pref.setEntries(mSettingsManager.getEntries(key));
+                pref.setEntryValues(mSettingsManager.getEntryValues(key));
+                String values = mSettingsManager.getValue(key);
+                if (values != null) {
+                    Set<String> valueSet = new HashSet<String>();
+                    String[] splitValues = values.split(";");
+                    for (String str : splitValues) {
+                        valueSet.add(str);
+                    }
+                    pref.setValues(valueSet);
+                }
             }
         }
     }
