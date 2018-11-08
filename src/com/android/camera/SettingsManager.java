@@ -156,7 +156,6 @@ public class SettingsManager implements ListMenu.SettingsListener {
     public static final String KEY_HDR = "pref_camera2_hdr_key";
     public static final String KEY_VIDEO_HDR_VALUE = "pref_camera2_video_hdr_key";
     public static final String KEY_CAPTURE_MFNR_VALUE = "pref_camera2_capture_mfnr_key";
-    public static final String KEY_CAPTURE_MFSR_VALUE = "pref_camera2_capture_mfsr_key";
     public static final String KEY_SAVERAW = "pref_camera2_saveraw_key";
     public static final String KEY_ZOOM = "pref_camera2_zoom_key";
     public static final String KEY_SHARPNESS_CONTROL_MODE = "pref_camera2_sharpness_control_key";
@@ -571,6 +570,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
     }
 
     public String getValue(String key) {
+        if (mValuesMap == null) return null;
         Values values = mValuesMap.get(key);
         if (values == null) return null;
         if (values.overriddenValue == null) return values.value;
@@ -604,23 +604,6 @@ public class SettingsManager implements ListMenu.SettingsListener {
         SharedPreferences sharedPreferences = mContext.getSharedPreferences(prefName,
                 Context.MODE_PRIVATE);
         return sharedPreferences.getFloat(key, 0.5f);
-    }
-
-    private boolean setIsoPref(String key, int value) {
-        boolean result = false;
-        final SharedPreferences sharedPref = mContext.getSharedPreferences(
-                ComboPreferences.getLocalSharedPreferencesName(mContext, getCurrentCameraId()),
-                Context.MODE_PRIVATE);
-        int prefValue = Integer.parseInt(sharedPref.getString(key, "100"));
-        if (prefValue != value) {
-            ListPreference pref = mPreferenceGroup.findPreference(key);
-            SharedPreferences.Editor editor = sharedPref.edit();
-            editor.putString(key, String.valueOf(value));
-            editor.apply();
-            updateMapAndNotify(pref);
-            result = true;
-        }
-        return result;
     }
 
     public boolean isOverriden(String key) {
@@ -671,20 +654,6 @@ public class SettingsManager implements ListMenu.SettingsListener {
             List<SettingState> list = new ArrayList<>();
             Values values = new Values("" + value * minFocus, null);
             SettingState ss = new SettingState(KEY_FOCUS_DISTANCE, values);
-            list.add(ss);
-            notifyListeners(list);
-        }
-    }
-
-    public void setIsoValue(String key, boolean forceNotify, float value, int maxIso) {
-        boolean isSuccess = false;
-        if (value >= 0) {
-            isSuccess = setIsoPref(key, (int)(value * maxIso));
-        }
-        if (isSuccess || forceNotify) {
-            List<SettingState> list = new ArrayList<>();
-            Values values = new Values("" + value * maxIso, null);
-            SettingState ss = new SettingState(KEY_MANUAL_ISO_VALUE, values);
             list.add(ss);
             notifyListeners(list);
         }
@@ -1468,11 +1437,13 @@ public class SettingsManager implements ListMenu.SettingsListener {
 
     private List<String> getSupportedWhiteBalanceModes(int cameraId) {
         try {
-            int[] whiteBalanceModes = mCharacteristics.get(cameraId).get(CameraCharacteristics
-                    .CONTROL_AWB_AVAILABLE_MODES);
             List<String> modes = new ArrayList<>();
-            for (int mode : whiteBalanceModes) {
-                modes.add("" + mode);
+            if (mCharacteristics.size() > 0) {
+                int[] whiteBalanceModes = mCharacteristics.get(cameraId).get(CameraCharacteristics
+                        .CONTROL_AWB_AVAILABLE_MODES);
+                for (int mode : whiteBalanceModes) {
+                    modes.add("" + mode);
+                }
             }
             return modes;
         } catch (IndexOutOfBoundsException e) {
@@ -1514,7 +1485,11 @@ public class SettingsManager implements ListMenu.SettingsListener {
     }
 
     private boolean isFlashAvailable(int cameraId) {
-        return mCharacteristics.get(cameraId).get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+        if (mCharacteristics.size() > 0) {
+            return mCharacteristics.get(cameraId).get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+        } else {
+            return false;
+        }
     }
 
     public StreamConfigurationMap getStreamConfigurationMap(int cameraId){
@@ -1533,23 +1508,29 @@ public class SettingsManager implements ListMenu.SettingsListener {
     }
 
     private List<String> getSupportedIso(int cameraId) {
-        Range<Integer> range = mCharacteristics.get(cameraId).get(CameraCharacteristics
-                .SENSOR_INFO_SENSITIVITY_RANGE);
         List<String> supportedIso = new ArrayList<>();
-        supportedIso.add("auto");
+        try {
+            int[] range = mCharacteristics.get(cameraId).get(
+                    CaptureModule.ISO_AVAILABLE_MODES);
+            supportedIso.add("auto");
 
-        if (range != null) {
-            int max = range.getUpper();
-            int value = 50;
-            while (value <= max) {
-                if (range.contains(value)) {
-                    supportedIso.add("" + value);
+            if (range != null) {
+                for (int iso : range) {
+                    for (String key : KEY_ISO_INDEX.keySet()) {
+                        if (KEY_ISO_INDEX.get(key).equals(iso)) {
+                            supportedIso.add(key);
+                        }
+                    }
                 }
-                value += 50;
+            } else {
+                Log.w(TAG, "Supported ISO range is null.");
             }
-        } else {
-            Log.w(TAG, "Supported ISO range is null.");
+        } catch (NullPointerException e) {
+            Log.w(TAG, "Supported ISO_AVAILABLE_MODES is null.");
+        } catch (IllegalArgumentException e) {
+            Log.w(TAG, "IllegalArgumentException Supported ISO_AVAILABLE_MODES is wrong.");
         }
+
         return supportedIso;
     }
 

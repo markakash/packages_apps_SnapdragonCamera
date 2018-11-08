@@ -435,6 +435,7 @@
 
     <!-- Camera Preferences Picture size dialog box entries -->
     <string-array name="pref_camera2_picturesize_entries" translatable="false">
+        <item>@string/pref_camera_picturesize_entry_48mp</item>
         <item>@string/pref_camera_picturesize_entry_24mp</item>
         <item>@string/pref_camera_picturesize_entry_21mp</item>
         <item>5184 x 3880</item>
@@ -473,6 +474,7 @@
          size to the first one in the list that is also supported by the
          driver -->
     <string-array name="pref_camera2_picturesize_entryvalues" translatable="false">
+        <item>8000x6000</item>
         <item>5656x4242</item>
         <item>5344x4008</item>
         <item>5184x3880</item>
@@ -644,6 +646,7 @@
         <item>@string/pref_camera_iso_entry_iso400</item>
         <item>@string/pref_camera_iso_entry_iso800</item>
         <item>@string/pref_camera_iso_entry_iso1600</item>
+        <item>@string/pref_camera_iso_entry_iso3200</item>
     </string-array>
 
     <!-- Do not localize entryvalues -->
@@ -654,6 +657,7 @@
         <item>400</item>
         <item>800</item>
         <item>1600</item>
+        <item>3200</item>
     </string-array>
 
     <!-- Camera Preferences Auto Exposure dialog box entries -->
@@ -1211,16 +1215,6 @@ for time lapse recording -->
     <string-array name="pref_camera2_capture_mfnr_entryvalues" translatable="false">
         <item>@string/pref_camera2_capture_mfnr_entry_value_disable</item>
         <item>@string/pref_camera2_capture_mfnr_entry_value_enable</item>
-    </string-array>
-
-    <string-array name="pref_camera2_capture_mfsr_entries" translatable="false">
-        <item>@string/pref_camera2_capture_mfsr_entry_disable</item>
-        <item>@string/pref_camera2_capture_mfsr_entry_enable</item>
-    </string-array>
-
-    <string-array name="pref_camera2_capture_mfsr_entryvalues" translatable="false">
-        <item>@string/pref_camera2_capture_mfsr_entry_value_disable</item>
-        <item>@string/pref_camera2_capture_mfsr_entry_value_enable</item>
     </string-array>
 
 </resources>
