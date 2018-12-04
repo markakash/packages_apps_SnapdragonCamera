@@ -161,6 +161,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
     public static final String KEY_HDR = "pref_camera2_hdr_key";
     public static final String KEY_VIDEO_HDR_VALUE = "pref_camera2_video_hdr_key";
     public static final String KEY_CAPTURE_MFNR_VALUE = "pref_camera2_capture_mfnr_key";
+    public static final String KEY_SENSOR_MODE_FS2_VALUE = "pref_camera2_fs2_key";
     public static final String KEY_SAVERAW = "pref_camera2_saveraw_key";
     public static final String KEY_ZOOM = "pref_camera2_zoom_key";
     public static final String KEY_SHARPNESS_CONTROL_MODE = "pref_camera2_sharpness_control_key";
@@ -749,6 +750,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
         ListPreference zoom = mPreferenceGroup.findPreference(KEY_ZOOM);
         ListPreference qcfa = mPreferenceGroup.findPreference(KEY_QCFA);
         ListPreference bsgc = mPreferenceGroup.findPreference(KEY_BSGC_DETECTION);
+        ListPreference fsMode = mPreferenceGroup.findPreference(KEY_SENSOR_MODE_FS2_VALUE);
 
         if (whiteBalance != null) {
             if (filterUnsupportedOptions(whiteBalance, getSupportedWhiteBalanceModes(cameraId))) {
@@ -900,6 +902,11 @@ public class SettingsManager implements ListMenu.SettingsListener {
             }
         }
 
+        if (fsMode != null) {
+            if (!isFastShutterModeSupported(cameraId)) {
+                removePreference(mPreferenceGroup, KEY_SENSOR_MODE_FS2_VALUE);
+            }
+        }
 
     }
 
@@ -1344,6 +1351,17 @@ public class SettingsManager implements ListMenu.SettingsListener {
             e.printStackTrace();
         }
         return ret;
+    }
+
+    private boolean isFastShutterModeSupported(int id) {
+        boolean result = false;
+        try {
+            byte fastModeSupport = mCharacteristics.get(id).get(CaptureModule.fs_mode_support);
+            result = (fastModeSupport == 1);
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+        }
+        return result;
     }
 
     public boolean isFacingFront(int id) {
@@ -1799,11 +1817,7 @@ public class SettingsManager implements ListMenu.SettingsListener {
     public boolean isZSLInAppEnabled(){
         String value = getValue(KEY_ZSL);
         String appZSLValue = mContext.getString(R.string.pref_camera2_zsl_entryvalue_app_zsl);
-        if ( (value != null && value.equals(appZSLValue)) ||
-                SettingsManager.SCENE_MODE_SUNSET_STRING.equals(
-                        SettingsManager.getInstance().getValue(SettingsManager.KEY_SCENE_MODE)) ||
-                SettingsManager.SCENE_MODE_LANDSCAPE_STRING.equals(
-                        SettingsManager.getInstance().getValue(SettingsManager.KEY_SCENE_MODE))){
+        if ( value != null && value.equals(appZSLValue)){
             return true;
         }else{
             return false;
