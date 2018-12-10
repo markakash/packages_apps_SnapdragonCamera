@@ -469,6 +469,8 @@ public class CaptureModule implements CameraModule, PhotoController,
     private byte[] mJpegImageData;
     private boolean mSaveRaw = false;
     private boolean mSupportZoomCapture = true;
+    private long mStartRecordingTime;
+    private long mStopRecordingTime;
 
     private int mLastAeState = -1;
     private int mLastAfState = -1;
@@ -784,7 +786,6 @@ public class CaptureModule implements CameraModule, PhotoController,
                                         CaptureResult partialResult) {
             int id = (int) partialResult.getRequest().getTag();
             if (id == getMainCameraId()) {
-                updateFocusStateChange(partialResult);
                 Face[] faces = partialResult.get(CaptureResult.STATISTICS_FACES);
                 if (faces != null && isBsgcDetecionOn()) {
                     updateFaceView(faces, getBsgcInfo(partialResult, faces.length));
@@ -4341,8 +4342,9 @@ public class CaptureModule implements CameraModule, PhotoController,
             mCaptureSession[cameraId] = cameraCaptureSession;
             try {
                 setUpVideoCaptureRequestBuilder(mVideoRequestBuilder, cameraId);
-                mCurrentSession.setRepeatingRequest(mVideoRequestBuilder.build(),
-                        mCaptureCallback, mCameraHandler);
+                List list = CameraUtil
+                        .createHighSpeedRequestList(mVideoRequestBuilder.build());
+                mCurrentSession.setRepeatingBurst(list, mCaptureCallback, mCameraHandler);
             } catch (CameraAccessException e) {
                 e.printStackTrace();
             } catch (IllegalStateException e) {
@@ -4383,15 +4385,9 @@ public class CaptureModule implements CameraModule, PhotoController,
             List<CaptureRequest> slowMoRequests = null;
             try {
                 setUpVideoCaptureRequestBuilder(mVideoRequestBuilder, cameraId);
-                if (mHighSpeedCapture && ((int) mHighSpeedFPSRange.getUpper() > NORMAL_SESSION_MAX_FPS)) {
-                    slowMoRequests = ((CameraConstrainedHighSpeedCaptureSession) mCurrentSession).
-                            createHighSpeedRequestList(mVideoRequestBuilder.build());
-                    mCurrentSession.setRepeatingBurst(slowMoRequests,
-                            mCaptureCallback, mCameraHandler);
-                } else {
-                    mCurrentSession.setRepeatingRequest(mVideoRequestBuilder.build(),
-                            mCaptureCallback, mCameraHandler);
-                }
+                List list = CameraUtil
+                        .createHighSpeedRequestList(mVideoRequestBuilder.build());
+                mCurrentSession.setRepeatingBurst(list,mCaptureCallback, mCameraHandler);
             } catch (CameraAccessException e) {
                 e.printStackTrace();
             } catch (IllegalStateException e) {
@@ -4584,6 +4580,7 @@ public class CaptureModule implements CameraModule, PhotoController,
         if (null == mCameraDevice[cameraId]) {
             return false;
         }
+        mStartRecordingTime = System.currentTimeMillis();
         Log.d(TAG, "StartRecordingVideo " + cameraId);
         mStartRecPending = true;
         mIsRecordingVideo = true;
@@ -4609,11 +4606,7 @@ public class CaptureModule implements CameraModule, PhotoController,
             closePreviewSession();
             mFrameProcessor.onClose();
 
-            Size preview = mVideoPreviewSize;
-            if (mHighSpeedCapture) {
-                preview = mVideoSize;
-            }
-            if (mUI.setPreviewSize(preview.getWidth(), preview.getHeight())) {
+            if (mUI.setPreviewSize(mVideoPreviewSize.getWidth(), mVideoPreviewSize.getHeight())) {
                 mUI.hideSurfaceView();
                 mUI.showSurfaceView();
             }
@@ -4672,6 +4665,7 @@ public class CaptureModule implements CameraModule, PhotoController,
                                 @Override
                                 public void onConfigured(CameraCaptureSession cameraCaptureSession) {
                                     mCurrentSession = cameraCaptureSession;
+                                    Log.v(TAG, "createConstrainedHighSpeedCaptureSession onConfigured");
                                     mCaptureSession[cameraId] = cameraCaptureSession;
                                     CameraConstrainedHighSpeedCaptureSession session =
                                             (CameraConstrainedHighSpeedCaptureSession) mCurrentSession;
@@ -4793,7 +4787,8 @@ public class CaptureModule implements CameraModule, PhotoController,
         requestAudioFocus();
         try {
             mMediaRecorder.start(); // Recording is now started
-            Log.d(TAG, "StartRecordingVideo done.");
+            Log.d(TAG, "StartRecordingVideo done. Time=" +
+                    (System.currentTimeMillis() - mStartRecordingTime) + "ms");
         } catch (RuntimeException e) {
             Toast.makeText(mActivity,"Could not start media recorder.\n " +
                     "Can't start video recording.", Toast.LENGTH_LONG).show();
@@ -5183,7 +5178,7 @@ public class CaptureModule implements CameraModule, PhotoController,
 
     private void stopRecordingVideo(int cameraId) {
         Log.d(TAG, "stopRecordingVideo " + cameraId);
-
+        mStopRecordingTime = System.currentTimeMillis();
         mStopRecPending = true;
         boolean shouldAddToMediaStoreNow = false;
         // Stop recording
@@ -5201,7 +5196,8 @@ public class CaptureModule implements CameraModule, PhotoController,
             mMediaRecorder.setOnInfoListener(null);
             mMediaRecorder.stop();
             shouldAddToMediaStoreNow = true;
-            Log.d(TAG, "stopRecordingVideo done.");
+            Log.d(TAG, "stopRecordingVideo done. Time=" +
+                    (System.currentTimeMillis() - mStopRecordingTime) + "ms");
             AccessibilityUtils.makeAnnouncement(mUI.getVideoButton(),
                     mActivity.getString(R.string.video_recording_stopped));
         } catch (RuntimeException e) {
