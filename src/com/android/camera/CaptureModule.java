@@ -1577,7 +1577,12 @@ public class CaptureModule implements CameraModule, PhotoController,
 
             Surface surface = null;
             if (!mDeepPortraitMode) {
-                waitForPreviewSurfaceReady();
+                try {
+                    waitForPreviewSurfaceReady();
+                } catch (RuntimeException e) {
+                    Log.v(TAG,
+                            "createSession: normal status occur Time out waiting for surface ");
+                }
                 surface = getPreviewSurfaceForSession(id);
 
                 if(id == getMainCameraId()) {
@@ -1615,15 +1620,17 @@ public class CaptureModule implements CameraModule, PhotoController,
                 }
 
                 List<OutputConfiguration> outputConfigurations = null;
-                if (mSettingsManager.getSavePictureFormat() == SettingsManager.HEIF_FORMAT ) {
+                if (ApiHelper.isAndroidPOrHigher()) {
                     outputConfigurations = new ArrayList<OutputConfiguration>();
-                    if (mInitHeifWriter != null) {
-                        for (Surface s : list) {
-                            outputConfigurations.add(new OutputConfiguration(s));
+                    for (Surface s : list) {
+                        outputConfigurations.add(new OutputConfiguration(s));
+                    }
+                    if (mSettingsManager.getSavePictureFormat() == SettingsManager.HEIF_FORMAT ) {
+                        if (mInitHeifWriter != null) {
+                            mHeifOutput = new OutputConfiguration(mInitHeifWriter.getInputSurface());
+                            mHeifOutput.enableSurfaceSharing();
+                            outputConfigurations.add(mHeifOutput);
                         }
-                        mHeifOutput = new OutputConfiguration(mInitHeifWriter.getInputSurface());
-                        mHeifOutput.enableSurfaceSharing();
-                        outputConfigurations.add(mHeifOutput);
                     }
                 }
                 if(mChosenImageFormat == ImageFormat.YUV_420_888 || mChosenImageFormat == ImageFormat.PRIVATE) {
@@ -1645,17 +1652,11 @@ public class CaptureModule implements CameraModule, PhotoController,
                         }
                     }
                 } else {
-                    if (ApiHelper.isAndroidPOrHigher()) {
-                        createCameraSessionWithSessionConfiguration(id, list, captureSessionCallback,
+                    if (ApiHelper.isAndroidPOrHigher() && outputConfigurations != null) {
+                        createCameraSessionWithSessionConfiguration(id, outputConfigurations, captureSessionCallback,
                                 mCameraHandler, mPreviewRequestBuilder[id].build());
                     } else {
-                        if (mSettingsManager.getSavePictureFormat() == SettingsManager.HEIF_FORMAT &&
-                                outputConfigurations != null) {
-                            mCameraDevice[id].createCaptureSessionByOutputConfigurations(outputConfigurations,
-                                    captureSessionCallback, null);
-                        } else {
-                            mCameraDevice[id].createCaptureSession(list, captureSessionCallback, null);
-                        }
+                        mCameraDevice[id].createCaptureSession(list, captureSessionCallback, null);
                     }
                 }
             } else {
@@ -2581,10 +2582,13 @@ public class CaptureModule implements CameraModule, PhotoController,
                         }
                     }, mCaptureCallbackHandler);
         } catch (CameraAccessException e) {
-            Log.d(TAG, "captureVideoSnapshot failed");
+            Log.e(TAG, "captureVideoSnapshot failed: CameraAccessException");
             e.printStackTrace();
         } catch (IllegalArgumentException e) {
-            Log.d(TAG, "captureVideoSnapshot IllegalArgumentException failed");
+            Log.e(TAG, "captureVideoSnapshot failed: IllegalArgumentException");
+            e.printStackTrace();
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "captureVideoSnapshot failed: IllegalStateException");
             e.printStackTrace();
         }
     }
@@ -3139,8 +3143,11 @@ public class CaptureModule implements CameraModule, PhotoController,
 
     private void applyVideoSnapshot(CaptureRequest.Builder builder, int id) {
         builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
+        applyFaceDetection(builder);
         applyColorEffect(builder);
         applyVideoFlash(builder);
+        applyVideoStabilization(builder);
+        applyVideoEIS(builder);
     }
 
     private void applyCommonSettings(CaptureRequest.Builder builder, int id) {
@@ -4433,12 +4440,8 @@ public class CaptureModule implements CameraModule, PhotoController,
 
 
     private void createCameraSessionWithSessionConfiguration(int cameraId,
-                 List<Surface> outputSurfaces, CameraCaptureSession.StateCallback listener,
+                 List<OutputConfiguration> outConfigurations, CameraCaptureSession.StateCallback listener,
                  Handler handler, CaptureRequest initialRequest) {
-        List<OutputConfiguration> outConfigurations = new ArrayList<>(outputSurfaces.size());
-        for (Surface surface : outputSurfaces) {
-            outConfigurations.add(new OutputConfiguration(surface));
-        }
         int opMode = SESSION_REGULAR;
         String valueFS2 = mSettingsManager.getValue(SettingsManager.KEY_SENSOR_MODE_FS2_VALUE);
         if (valueFS2 != null) {
@@ -5079,9 +5082,14 @@ public class CaptureModule implements CameraModule, PhotoController,
         Log.v(TAG, "pauseVideoRecording");
         mMediaRecorderPausing = true;
         mRecordingTotalTime += SystemClock.uptimeMillis() - mRecordingStartTime;
+        String value = mSettingsManager.getValue(SettingsManager.KEY_EIS_VALUE);
+        boolean noNeedEndofStreamWhenPause = value != null && value.equals("V3");
         // As EIS is not supported for HFR case (>=120 )
         // and FOVC also currently don’t require this for >=120 case
-        if (mHighSpeedCapture && ((int)mHighSpeedFPSRange.getUpper() >= HIGH_SESSION_MAX_FPS)) {
+        // so use noNeedEndOfStreamInHFR to control
+        boolean noNeedEndOfStreamInHFR = mHighSpeedCapture &&
+                ((int)mHighSpeedFPSRange.getUpper() >= HIGH_SESSION_MAX_FPS);
+        if (noNeedEndofStreamWhenPause || noNeedEndOfStreamInHFR) {
             mMediaRecorder.pause();
         } else {
             setEndOfStream(false, false);
@@ -5119,7 +5127,7 @@ public class CaptureModule implements CameraModule, PhotoController,
                 }
             } else {
                 // is pause or stopRecord
-                if (!(mMediaRecorderPausing && mStopRecPending) && (mCurrentSession != null)) {
+                if ((mMediaRecorderPausing || mStopRecPending) && (mCurrentSession != null)) {
                     mCurrentSession.stopRepeating();
                     try {
                         mVideoRequestBuilder.set(CaptureModule.recording_end_stream, (byte) 0x01);
@@ -5823,7 +5831,7 @@ public class CaptureModule implements CameraModule, PhotoController,
         if (value != null) {
             if (value.equals("V2")) {
                 mStreamConfigOptMode = STREAM_CONFIG_MODE_QTIEIS_REALTIME;
-            } else if (value.equals("V3")) {
+            } else if (value.equals("V3") || value.equals("V3SetWhenPause")) {
                 mStreamConfigOptMode = STREAM_CONFIG_MODE_QTIEIS_LOOKAHEAD;
             }
             byte byteValue = (byte) (value.equals("disable") ? 0x00 : 0x01);
@@ -6672,7 +6680,8 @@ public class CaptureModule implements CameraModule, PhotoController,
 
     private void setDisplayOrientation() {
         mDisplayRotation = CameraUtil.getDisplayRotation(mActivity);
-        mDisplayOrientation = CameraUtil.getDisplayOrientation(mDisplayRotation, getMainCameraId());
+        mDisplayOrientation = CameraUtil.getDisplayOrientationForCamera2(
+                mDisplayRotation, getMainCameraId());
     }
 
     @Override
