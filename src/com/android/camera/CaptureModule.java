@@ -590,7 +590,7 @@ public class CaptureModule implements CameraModule, PhotoController,
     private static final int SELFIE_FLASH_DURATION = 680;
     private static final int SESSION_CONFIGURE_TIMEOUT_MS = 3000;
 
-    private MediaActionSound mSound;
+    private SoundClips.Player mSoundPlayer;
     private Size mSupportedMaxPictureSize;
     private Size mSupportedRawPictureSize;
 
@@ -1893,9 +1893,9 @@ public class CaptureModule implements CameraModule, PhotoController,
         Log.d(TAG, "takePicture");
         mUI.enableShutter(false);
         if ((mSettingsManager.isZSLInHALEnabled() &&
-                !isFlashOn(getMainCameraId()) &&
+                !isFlashOn(getMainCameraId()) && (mPreviewCaptureResult != null &&
                 mPreviewCaptureResult.get(CaptureResult.CONTROL_AE_STATE) !=
-                     CameraMetadata.CONTROL_AE_STATE_FLASH_REQUIRED) ||
+                     CameraMetadata.CONTROL_AE_STATE_FLASH_REQUIRED)) ||
                 isActionImageCapture()) {
             takeZSLPictureInHAL();
         } else {
@@ -2145,7 +2145,7 @@ public class CaptureModule implements CameraModule, PhotoController,
             Message message =
                     mCameraHandler.obtainMessage(CANCEL_TOUCH_FOCUS, id, 0, mCameraId[id]);
             mCameraHandler.sendMessageDelayed(message, CANCEL_TOUCH_FOCUS_DELAY);
-        } catch (CameraAccessException | IllegalStateException e) {
+        } catch (CameraAccessException | IllegalStateException | IllegalArgumentException e) {
             e.printStackTrace();
         }
     }
@@ -2409,8 +2409,11 @@ public class CaptureModule implements CameraModule, PhotoController,
 
     private void captureStillPictureForLongshot(CaptureRequest.Builder captureBuilder, int id) throws CameraAccessException{
         List<CaptureRequest> burstList = new ArrayList<>();
+        boolean isBurstShotFpsEnable = PersistUtil.isBurstShotFpsEnabled();
         for (int i = 0; i < MAX_IMAGEREADERS*2; i++) {
-            burstList.add(mPreviewRequestBuilder[id].build());
+            if (isBurstShotFpsEnable) {
+                burstList.add(mPreviewRequestBuilder[id].build());
+            }
             burstList.add(captureBuilder.build());
         }
         mCaptureSession[id].captureBurst(burstList, mLongshotCallBack, mCaptureCallbackHandler);
@@ -2497,6 +2500,10 @@ public class CaptureModule implements CameraModule, PhotoController,
             captureBuilder.set(CaptureRequest.JPEG_THUMBNAIL_QUALITY, (byte)80);
             applyVideoSnapshot(captureBuilder, id);
             applyZoom(captureBuilder, id);
+            if (mHighSpeedCapture) {
+                captureBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                        mHighSpeedFPSRange);
+            }
 
             if (mSettingsManager.getSavePictureFormat() == SettingsManager.HEIF_FORMAT) {
                 long captureTime = System.currentTimeMillis();
@@ -3122,8 +3129,6 @@ public class CaptureModule implements CameraModule, PhotoController,
     }
 
     private void applySettingsForJpegInformation(CaptureRequest.Builder builder, int id) {
-        if (mSettingsManager.getSavePictureFormat() == SettingsManager.HEIF_FORMAT)
-            return;
         Location location = mLocationManager.getCurrentLocation();
         if(location != null) {
             // make copy so that we don't alter the saved location since we may re-use it
@@ -3268,9 +3273,9 @@ public class CaptureModule implements CameraModule, PhotoController,
         if (mIsRecordingVideo) {
             stopRecordingVideo(getMainCameraId());
         }
-        if (mSound != null) {
-            mSound.release();
-            mSound = null;
+        if (mSoundPlayer != null) {
+            mSoundPlayer.release();
+            mSoundPlayer = null;
         }
         if (selfieThread != null) {
             selfieThread.interrupt();
@@ -3515,8 +3520,9 @@ public class CaptureModule implements CameraModule, PhotoController,
         updatePreviewSize();
         mCameraIdList = new ArrayList<>();
 
-        if (mSound == null) {
-            mSound = new MediaActionSound();
+        // Set up sound playback for shutter button, video record and video stop
+        if (mSoundPlayer == null) {
+            mSoundPlayer = SoundClips.getPlayer(mActivity);
         }
 
         updateSaveStorageState();
@@ -3845,7 +3851,8 @@ public class CaptureModule implements CameraModule, PhotoController,
     @Override
     public void onSingleTapUp(View view, int x, int y) {
         if (mPaused || !mCamerasOpened || !mFirstTimeInitialized || !mAutoFocusRegionSupported
-                || !mAutoExposureRegionSupported || !isTouchToFocusAllowed()) {
+                || !mAutoExposureRegionSupported || !isTouchToFocusAllowed()
+                || mCaptureSession[getMainCameraId()] == null) {
             return;
         }
         if (DEBUG) {
@@ -4235,7 +4242,7 @@ public class CaptureModule implements CameraModule, PhotoController,
             mVideoSnapshotSize = getMaxPictureSizeLiveshot();
         }
 
-        String videoSnapshot = getVideoSnapshotSize();
+        String videoSnapshot = PersistUtil.getVideoSnapshotSize();
         String[] sourceStrArray = videoSnapshot.split("x");
         if (sourceStrArray != null && sourceStrArray.length >= 2) {
             int width = Integer.parseInt(sourceStrArray[0]);
@@ -4275,10 +4282,6 @@ public class CaptureModule implements CameraModule, PhotoController,
             }
         }
         return optimalSize;
-    }
-
-    private String getVideoSnapshotSize(){
-        return SystemProperties.get("persist.sys.camera.video.snapshotsize", "");
     }
 
     private boolean isVideoSize1080P(Size size) {
@@ -4358,10 +4361,7 @@ public class CaptureModule implements CameraModule, PhotoController,
                 e.printStackTrace();
             }
             if (!mFrameProcessor.isFrameListnerEnabled() && !startMediaRecorder()) {
-                mUI.showUIafterRecording();
-                releaseMediaRecorder();
-                mFrameProcessor.setVideoOutputSurface(null);
-                restartSession(true);
+                startRecordingFailed();
                 return;
             }
 
@@ -4538,13 +4538,6 @@ public class CaptureModule implements CameraModule, PhotoController,
         for (Surface surface : outputSurfaces) {
             outConfigurations.add(new OutputConfiguration(surface));
         }
-        if (mSettingsManager.getSavePictureFormat() == SettingsManager.HEIF_FORMAT &&
-                mLiveShotInitHeifWriter != null) {
-            mLiveShotOutput = new OutputConfiguration(
-                    mLiveShotInitHeifWriter.getInputSurface());
-            mLiveShotOutput .enableSurfaceSharing();
-            outConfigurations.add(mLiveShotOutput);
-        }
         Method method_setSessionParameters = null;
         Method method_createCaptureSession = null;
         Object sessionConfig = null;
@@ -4691,10 +4684,7 @@ public class CaptureModule implements CameraModule, PhotoController,
                                         e.printStackTrace();
                                     }
                                     if (!mFrameProcessor.isFrameListnerEnabled() && !startMediaRecorder()) {
-                                        mUI.showUIafterRecording();
-                                        releaseMediaRecorder();
-                                        mFrameProcessor.setVideoOutputSurface(null);
-                                        restartSession(true);
+                                        startRecordingFailed();
                                         return;
                                     }
                                     mUI.clearFocus();
@@ -4762,6 +4752,18 @@ public class CaptureModule implements CameraModule, PhotoController,
         return true;
     }
 
+    private void startRecordingFailed() {
+        releaseMediaRecorder();
+        mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mUI.showUIafterRecording();
+                mFrameProcessor.setVideoOutputSurface(null);
+                restartSession(true);
+            }
+        });
+    }
+
     private void quitRecordingWithError(String msg) {
         Toast.makeText(mActivity,"Could not start media recorder.\n " +
                 msg, Toast.LENGTH_LONG).show();
@@ -4806,15 +4808,7 @@ public class CaptureModule implements CameraModule, PhotoController,
 
     public void startMediaRecording() {
         if (!startMediaRecorder()) {
-            mActivity.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    mUI.showUIafterRecording();
-                }
-            });
-            releaseMediaRecorder();
-            mFrameProcessor.setVideoOutputSurface(null);
-            restartSession(true);
+            startRecordingFailed();
         }
     }
 
@@ -6515,9 +6509,9 @@ public class CaptureModule implements CameraModule, PhotoController,
     private void checkAndPlayRecordSound(int id, boolean isStarted) {
         if (id == getMainCameraId()) {
             String value = mSettingsManager.getValue(SettingsManager.KEY_SHUTTER_SOUND);
-            if (value != null && value.equals("on") && mSound != null) {
-                mSound.play(isStarted? MediaActionSound.START_VIDEO_RECORDING
-                        : MediaActionSound.STOP_VIDEO_RECORDING);
+            if (value != null && value.equals("on") && mSoundPlayer != null) {
+                mSoundPlayer.play(isStarted? SoundClips.START_VIDEO_RECORDING
+                        : SoundClips.STOP_VIDEO_RECORDING);
             }
         }
     }
@@ -6525,8 +6519,8 @@ public class CaptureModule implements CameraModule, PhotoController,
     public void checkAndPlayShutterSound(int id) {
         if (id == getMainCameraId()) {
             String value = mSettingsManager.getValue(SettingsManager.KEY_SHUTTER_SOUND);
-            if (value != null && value.equals("on") && mSound != null) {
-                mSound.play(MediaActionSound.SHUTTER_CLICK);
+            if (value != null && value.equals("on") && mSoundPlayer != null) {
+                mSoundPlayer.play(SoundClips.SHUTTER_CLICK);
             }
         }
     }
@@ -7208,9 +7202,13 @@ public class CaptureModule implements CameraModule, PhotoController,
         Log.v(TAG, "Releasing media recorder.");
         if (mMediaRecorder != null) {
             cleanupEmptyFile();
-            mMediaRecorder.reset();
-            mMediaRecorder.release();
-            mMediaRecorder = null;
+            try{
+                mMediaRecorder.reset();
+                mMediaRecorder.release();
+                mMediaRecorder = null;
+            }catch (IllegalStateException e) {
+                e.printStackTrace();
+            }
         }
         mVideoFilename = null;
     }
